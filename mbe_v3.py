@@ -15,6 +15,7 @@ Extra Info: Based on qutip examples and the thesis by Thomas P. Ogden
 """
 
 import numpy as np
+from matplotlib import rc
 import matplotlib as mpl 
 from matplotlib import pylab as plt
 from numpy import linalg
@@ -23,9 +24,11 @@ import time as time
 from scipy import special
 from qutip import * 
 
+starttime = time.time()
 
-mpl.rcParams['text.usetex'] = True
-mpl.rcParams.update({'font.size': 14})
+mpl.rcParams.update({'font.size': 14,'text.usetex':True})
+# rc('font', **{'family': 'serif', 'serif': ['Computer Modern']})
+# rc('text', usetex=True)
 
 #constants 
 Isat = 3.9e1#Saturation intensity, F=3->F'=4, (isotropic light polarization) in W/m^2
@@ -47,6 +50,11 @@ def input_pulse(t,t0,peak,sigma):
 	gaussian=peak*np.exp(-(t-t0)**2/2/sigma**2)
 	return gaussian
 
+def photon_number(rabi_0,waist):
+	energy=2*np.pi*waist**2*Isat*np.sum(abs(rabi_0)**2)*dt*1e-9/gamma**2
+	num_photons=energy/(hbar*omega0)
+	return num_photons
+
 #solver of the Lindblad equation using qutip, the rabi frequency is time dependent
 def solve_Lindblad(t,rabi,rho_0):
 	S_12=tensor(basis(2,0)*basis(2,1).dag())
@@ -63,51 +71,99 @@ def solve_spatial(rho_z,N_z,rabi_0,dz,g):
 	rabi_1=rabi_0+1j*g*(1e3)*dz*rho_z*N_z
 	return rabi_1
 
-dt=0.1
+dt=0.5
 t_min=-20.
-t_max=100.
+t_max=200.
 tlist=np.arange(t_min,t_max,dt)
-dz=5.
+dz=1.
 min_z=0
 max_z=400.
 zlist=np.arange(min_z,max_z,dz)
-N_z=8.e-2 #atoms/um^3
+N=8.e-2 #atoms/um^3
+N_z=157 #atoms/um
 t0=20
 det=0
 width=0.5*atomiclifetime
-peak=gamma/50.
-OD=N_z*sigma_0*max_z*1e8
+peak=gamma/115.
+OD=N*sigma_0*max_z*1e8
 rho_0=basis(2,0)*basis(2,0).dag()
 rabi_t=(1 + 1j)*np.zeros([len(tlist),len(zlist)])
 rabi_t[:,0]=input_pulse(tlist,t0,peak,width)
 excited_pop=np.zeros([len(tlist),len(zlist)])
-print(OD)
+photons=photon_number(rabi_t[:,0],25e-6)
+
+print(OD,photons)
 
 
 for i in range(len(zlist)-1):
 	time_evolution=solve_Lindblad(tlist,rabi_t[:,i],rho_0)
 	excited_pop[:,i]=time_evolution.expect[0]
 	rho_eg=time_evolution.expect[1]
-	rabi_t[:,i+1]=solve_spatial(rho_eg,N_z,rabi_t[:,i],dz,g)
+	rabi_t[:,i+1]=solve_spatial(rho_eg,N,rabi_t[:,i],dz,g)
 
-plt.clf()
-plt.contourf(zlist,tlist,abs(rabi_t)**2, 20,alpha = 1, cmap = 'cividis')
-plt.xlabel(r"Distance [$\mu$m]")
-plt.ylabel(r"Time [ns]")
-cbar=plt.colorbar()
-cbar.set_label(r"Rabi frequency squared")
-plt.title(r"$|\Omega|^2$ vs time and space")
-plt.savefig('rabi.pdf')
-plt.clf()
-plt.contourf(zlist,tlist,excited_pop, 20,alpha = 1, cmap = 'Greens')
-plt.xlabel(r"Distance [$\mu$m]")
-plt.ylabel(r"Time [ns]")
-cbar=plt.colorbar()
-cbar.set_label(r"Excited state population")
-plt.title(r"$\rho_{ee}$ vs time and space")
-plt.savefig('rho_ee.pdf')
+intensity=0.5*c*epsilon0*(1e9*hbar/matrix_element)*abs(rabi_t)**2 
+time_int_excpop=np.sum(excited_pop*dt,axis=0)
+time_int_intensity=np.sum(intensity*dt,axis=0)
 
-# plt.legend(('ground', 'pulse', 'field'),loc='upper right')
+#Rate equations
+Ne_t_z=N_z*excited_pop
+R_sp=Ne_t_z*gamma
+dNdt=np.gradient(Ne_t_z,axis=0)
+R_diff=R_sp+dNdt
+
+#Find R_abs and R_em
+low_diff=R_diff<0
+high_diff=R_diff>0
+R_abs=np.array(R_diff)
+R_em=np.array(R_diff)
+R_abs[low_diff]=0
+R_em[high_diff]=0
+
+L_diff=np.sum(R_diff*dt,axis=0)
+L_abs=np.sum(R_abs*dt,axis=0)
+L_em=np.sum(abs(R_em)*dt,axis=0)
+
+
+# plt.clf()
+# plt.contourf(zlist,tlist,abs(rabi_t)**2, 40,alpha = 1, cmap = 'cividis')
+# plt.xlabel(r"Distance [$\mu$m]")
+# plt.ylabel(r"Time [ns]")
+# cbar=plt.colorbar()
+# cbar.set_label(r"Rabi frequency squared")
+# plt.title(r"$|\Omega|^2$ vs time and space")
+# plt.savefig('rabi.pdf')
+# plt.clf()
+# plt.contourf(zlist,tlist,excited_pop, 60,alpha = 1, cmap = 'cividis')
+# plt.xlabel(r"Distance [$\mu$m]")
+# plt.ylabel(r"Time [ns]")
+# cbar=plt.colorbar()
+# cbar.set_label(r"Excited state population")
+# plt.title(r"$\rho_{ee}$ vs time and space")
+# plt.savefig('rho_ee.pdf')
+
+# plt.clf()
+# plt.plot(zlist[:-1],time_int_excpop[:-1],'D',markevery=2)
+# plt.xlabel(r"Distance [$\mu$m]")
+# plt.ylabel(r"Integral")
+# plt.ticklabel_format(axis='y',style='sci',scilimits=(-2,0))
 # plt.show()
 
-# np.savetxt('populations_2level.dat', data.T)
+# plt.clf()
+# plt.ticklabel_format(axis='y',style='sci',scilimits=(-4,0))
+# plt.plot(tlist,R_sp[:,100],tlist,dNdt[:,100],tlist,R_diff[:,100],tlist,R_abs[:,100],tlist,abs(R_em[:,100]),'-')
+# plt.xlabel(r"Time [ns]")
+# # plt.xlabel(r"Distance [$\mu$m]")
+# plt.title(r"Rates as a function of time at $z=100\mu$m ")
+# plt.ylabel(r"Excited atoms per unit length per second")
+# plt.legend((r'$N_e \Gamma$', r'$dN_e/dt$',r'$R_{diff}$',r'$R_{abs}$',r'$R_{em}$'),loc='upper right')
+# plt.savefig('rates.pdf')
+
+plt.clf()
+plt.plot(zlist[:-1],L_diff[:-1],zlist[:-1],L_abs[:-1],zlist[:-1],L_em[:-1],'-',markevery=10)
+plt.xlabel(r"Distance [$\mu$m]")
+plt.ylabel(r"Integral in time")
+plt.ticklabel_format(axis='y',style='sci',scilimits=(-2,0))
+plt.legend((r'$L_{diff}$',r'$L_{abs}$',r'$L_{em}$'),loc='upper right')
+stoptime = time.time()
+print("Program took %1.2f seconds" %(stoptime-starttime))
+plt.show()
